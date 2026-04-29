@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Bike360.Application/Bike360.Application.csproj" />
+  <Project Path="Bike360.Domain/Bike360.Domain.csproj" />
+  <Project Path="Bike360.Infrastructure/Bike360.Infrastructure.csproj" />
+  <Project Path="Bike360/Bike360.csproj" />
+</Solution>

@@ -1,0 +1,6 @@
+@Bike360_HostAddress = http://localhost:5221
+
+GET {{Bike360_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
