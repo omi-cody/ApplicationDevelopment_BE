@@ -1,6 +1,8 @@
 ﻿using Bike360.Application.Interfaces;
+using Bike360.Application.Services;
 using Bike360.Domain.Entities;
 using Bike360.Infrastructure.Data;
+using Bike360.Infrastructure.Repositories;
 using Bike360.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http;
@@ -8,10 +10,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System;
-using System.Collections.Generic;
 using System.Text;
 
 namespace Bike360.Infrastructure
@@ -20,26 +20,29 @@ namespace Bike360.Infrastructure
     {
         public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
         {
+            // Database
             services.AddDbContext<AppDbContext>(options =>
                 options.UseNpgsql(configuration.GetConnectionString("SupaBaseConnection")));
 
-            services.AddIdentity<ApplicationUser, IdentityRole> (options =>
+            // ASP.NET Identity
+            services.AddIdentity<ApplicationUser, IdentityRole>(options =>
             {
                 options.Password.RequireDigit = true;
                 options.Password.RequireLowercase = true;
                 options.Password.RequireUppercase = true;
                 options.Password.RequireNonAlphanumeric = true;
                 options.Password.RequiredLength = 8;
-            }
-    )
-                .AddEntityFrameworkStores<AppDbContext>()
-                .AddDefaultTokenProviders();
+            })
+            .AddEntityFrameworkStores<AppDbContext>()
+            .AddDefaultTokenProviders();
 
+            // JWT Configuration
             var jwtSettings = configuration.GetSection("JwtSettings");
             services.Configure<JwtSetting>(jwtSettings);
-            var jwtConfig = jwtSettings.Get<JwtSetting>()?? new JwtSetting();
+            var jwtConfig = jwtSettings.Get<JwtSetting>() ?? new JwtSetting();
 
-           services.AddAuthentication(options =>
+            // Authentication & JWT Bearer
+            services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -56,38 +59,44 @@ namespace Bike360.Infrastructure
                     ValidateIssuerSigningKey = true,
                     ValidIssuer = jwtConfig.Issuer,
                     ValidAudience = jwtConfig.Audience,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtConfig.Key)),
+                    IssuerSigningKey = new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(jwtConfig.Key)),
                     ClockSkew = TimeSpan.Zero
                 };
-            
 
-            //return 401 and 403 instead of redirecting to login page
-            options.Events = new JwtBearerEvents
-            {
-                OnChallenge = context =>
+                // Return 401/403 JSON instead of redirecting to login page
+                options.Events = new JwtBearerEvents
                 {
-                    context.HandleResponse();
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.ContentType = "application/json";
-                    return context.Response.WriteAsync(
-                        "{\"status\":401,\"message\":\"Authentication required. Please log in.\"}");
-                },
-                OnForbidden = context =>
-                {
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    context.Response.ContentType = "application/json";
-                    return context.Response.WriteAsync(
-                        "{\"status\":403,\"message\":\"You do not have permission to access this resource.\"}");
-                }
-            };
-        });
+                    OnChallenge = context =>
+                    {
+                        context.HandleResponse();
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        context.Response.ContentType = "application/json";
+                        return context.Response.WriteAsync(
+                            "{\"status\":401,\"message\":\"Authentication required. Please log in.\"}");
+                    },
+                    OnForbidden = context =>
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        context.Response.ContentType = "application/json";
+                        return context.Response.WriteAsync(
+                            "{\"status\":403,\"message\":\"You do not have permission to access this resource.\"}");
+                    }
+                };
+            });
 
             services.AddAuthorization();
             services.AddHttpContextAccessor();
 
+            // Existing Services
             services.AddScoped<ITokenService, TokenService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<ICurrentUser, CurrentUserService>();
+
+            // Customer Feature Services
+            services.AddScoped<ICustomerRepository, CustomerRepository>();
+            services.AddScoped<ICustomerService, CustomerService>(); // ICustomerService (interface) → CustomerService (class)
+            services.AddScoped<IEmailService, EmailService>();
 
             return services;
         }
