@@ -12,6 +12,9 @@ namespace Bike360.Infrastructure.Data
     {
         public DbSet<Customer> Customers { get; set; }
         public DbSet<CustomerVehicle> CustomerVehicles { get; set; }
+        public DbSet<Part> Parts { get; set; }
+        public DbSet<SalesInvoice> SalesInvoices { get; set; }
+        public DbSet<SalesInvoiceItem> SalesInvoiceItems { get; set; }
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

@@ -88,6 +88,7 @@ namespace Bike360.Infrastructure
             services.AddScoped<ITokenService, TokenService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<ICurrentUser, CurrentUserService>();
+            services.AddScoped<ISalesService, SalesService>();
 
             return services;
         }
