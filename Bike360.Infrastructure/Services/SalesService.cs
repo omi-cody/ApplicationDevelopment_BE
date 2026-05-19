@@ -3,8 +3,10 @@ using Bike360.Application.Exceptions;
 using Bike360.Application.Interfaces;
 using Bike360.Domain.Entities;
 using Bike360.Infrastructure.Data;
+using MailKit.Net.Smtp;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using MimeKit;
 
 namespace Bike360.Infrastructure.Services
 {
@@ -13,11 +15,9 @@ namespace Bike360.Infrastructure.Services
         // FEATURE 2: Create sales invoice
         public async Task<SalesInvoiceResponse> CreateInvoiceAsync(CreateSalesInvoiceRequest request)
         {
-            // Transaction - if anything fails, undo everything
             using var transaction = await context.Database.BeginTransactionAsync();
             try
             {
-                // Check customer exists
                 var customer = await context.Customers
                     .FirstOrDefaultAsync(c => c.Id == request.CustomerId)
                     ?? throw new NotFoundException($"Customer with ID {request.CustomerId} not found.");
@@ -27,16 +27,13 @@ namespace Bike360.Infrastructure.Services
 
                 foreach (var item in request.Items)
                 {
-                    // Get part
                     var part = await context.Parts.FindAsync(item.PartId)
                         ?? throw new NotFoundException($"Part with ID {item.PartId} not found.");
 
-                    // Check stock
                     if (part.StockQuantity < item.Quantity)
                         throw new BadRequestException(
                             $"Not enough stock for: {part.Name}. Available: {part.StockQuantity}");
 
-                    // Reduce stock
                     part.StockQuantity -= item.Quantity;
 
                     var subTotal = part.Price * item.Quantity;
@@ -54,7 +51,6 @@ namespace Bike360.Infrastructure.Services
                 // Loyalty discount: 10% if total > Rs. 5000
                 decimal discountAmount = totalAmount > 5000 ? totalAmount * 0.10m : 0;
 
-                // Create invoice
                 var invoice = new SalesInvoice
                 {
                     InvoiceNumber = $"INV-{DateTime.UtcNow:yyyyMMddHHmmss}",
@@ -79,13 +75,80 @@ namespace Bike360.Infrastructure.Services
             }
         }
 
-        // FEATURE 3: Send invoice email (will implement fully in Feature 3)
+        // FEATURE 3: Send invoice via email
         public async Task SendInvoiceEmailAsync(int invoiceId)
         {
-            throw new NotImplementedException("Will be implemented in Feature 3.");
+            var invoice = await context.SalesInvoices
+                .Include(i => i.Customer)
+                .Include(i => i.Items).ThenInclude(i => i.Part)
+                .FirstOrDefaultAsync(i => i.Id == invoiceId)
+                ?? throw new NotFoundException($"Invoice not found.");
+
+            // Build email HTML
+            var itemRows = string.Join("", invoice.Items.Select(item =>
+                $"<tr>" +
+                $"<td style='padding:8px;border:1px solid #ddd'>{item.Part.Name}</td>" +
+                $"<td style='padding:8px;border:1px solid #ddd'>{item.Quantity}</td>" +
+                $"<td style='padding:8px;border:1px solid #ddd'>Rs. {item.UnitPrice:N2}</td>" +
+                $"<td style='padding:8px;border:1px solid #ddd'>Rs. {item.SubTotal:N2}</td>" +
+                $"</tr>"
+            ));
+
+            var discountRow = invoice.DiscountAmount > 0
+                ? $"<p><b style='color:green'>Loyalty Discount (10%): - Rs. {invoice.DiscountAmount:N2}</b></p>"
+                : "";
+
+            var emailBody = $"""
+                <div style='font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px'>
+                    <h2 style='color:#2b3053'>Invoice: {invoice.InvoiceNumber}</h2>
+                    <p>Dear <b>{invoice.Customer.FullName}</b>,</p>
+                    <p>Thank you for your purchase!</p>
+                    <table style='width:100%;border-collapse:collapse'>
+                        <tr style='background:#2b3053;color:white'>
+                            <th style='padding:8px'>Part</th>
+                            <th style='padding:8px'>Qty</th>
+                            <th style='padding:8px'>Unit Price</th>
+                            <th style='padding:8px'>Total</th>
+                        </tr>
+                        {itemRows}
+                    </table>
+                    <br/>
+                    <p><b>Total: Rs. {invoice.TotalAmount:N2}</b></p>
+                    {discountRow}
+                    <h3 style='color:#ff751f'>Final Amount: Rs. {invoice.FinalAmount:N2}</h3>
+                    <p>Date: {invoice.CreatedAt:dd MMM yyyy}</p>
+                    <hr/>
+                    <p style='color:gray;font-size:12px'>Vehicle Parts Center</p>
+                </div>
+            """;
+
+            // Send using MailKit
+            var emailMessage = new MimeMessage();
+            emailMessage.From.Add(new MailboxAddress(
+                config["EmailSettings:FromName"],
+                config["EmailSettings:FromEmail"]));
+            emailMessage.To.Add(new MailboxAddress(
+                invoice.Customer.FullName,
+                invoice.Customer.Email));
+            emailMessage.Subject = $"Invoice {invoice.InvoiceNumber} - Vehicle Parts Center";
+            emailMessage.Body = new TextPart("html") { Text = emailBody };
+
+            using var smtp = new SmtpClient();
+            await smtp.ConnectAsync(
+                config["EmailSettings:SmtpHost"],
+                int.Parse(config["EmailSettings:SmtpPort"]!),
+                false);
+            await smtp.AuthenticateAsync(
+                config["EmailSettings:Username"],
+                config["EmailSettings:Password"]);
+            await smtp.SendAsync(emailMessage);
+            await smtp.DisconnectAsync(true);
+
+            // Mark as sent
+            invoice.IsEmailSent = true;
+            await context.SaveChangesAsync();
         }
 
-        // Helper to build response
         private async Task<SalesInvoiceResponse> BuildInvoiceResponse(int invoiceId)
         {
             var invoice = await context.SalesInvoices
